@@ -1,0 +1,66 @@
+# Robot Card: MasterPi capabilities and constraints
+# This file describes what the robot can do and its limitations
+
+robot_card:
+  name: "MasterPi"
+  control_mode: "stepwise_closed_loop"
+  
+  sensors:
+    camera:
+      mount: "eye_in_hand"
+      resolution: "UNKNOWN_FILL"  # To be filled after testing
+      fps: "UNKNOWN_FILL"  # To be filled after testing
+    
+    distance_sensor:
+      available: true
+      type: "ultrasonic"
+      range_cm: "2-400"
+  
+  actuators:
+    base:
+      holonomic: true
+      max_step_duration_s: 0.5
+      max_velocity_mm_s: 200.0
+      max_yaw_rate_deg_s: 50.0
+      control_modes:
+        - "SetMecanumVelocity"  # velocity, direction, angular_rate
+        - "SetMecanumTranslation"  # velocity_x, velocity_y
+        - "SetMovementAngle"  # angle (fixed 70mm/s)
+    
+    arm:
+      ik_xyz_control: true
+      workspace_notes: "X: -10 to 10 cm, Y: 5 to 15 cm, Z: 0 to 25 cm (recommended ranges)"
+      safe_pose:
+        x: 0.0
+        y: 6.0
+        z: 18.0
+        pitch: 0.0
+        roll: -90.0
+        yaw: 90.0
+        speed_ms: 1500
+      default_speed_ms: 1500
+      default_pitch: 0.0
+      default_roll: -90.0
+      default_yaw: 90.0
+    
+    gripper:
+      open_close: true
+      has_position_control: true
+      position_range: "0-100"  # percentage
+      open_pulse: 2000
+      close_pulse: 1500
+  
+  safety:
+    require_stop_after_each_base_step: true
+    arm_min_z_cm: 0.0
+    arm_max_z_cm: 25.0
+    action_timeout_s: 2.0
+    base_step_duration_min_s: 0.2
+    base_step_duration_max_s: 0.5
+  
+  success_criteria:
+    grasp:
+      vision_confirm: true
+      recheck_after_lift: true
+      target_disappear_threshold: 0.8  # If target area drops by 80%, likely grasped
+

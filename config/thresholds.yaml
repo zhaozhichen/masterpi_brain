@@ -1,0 +1,49 @@
+# Control and detection thresholds
+# Adjust these values based on real-world testing
+
+thresholds:
+  # Detection thresholds
+  detection:
+    min_confidence: 0.3  # Minimum confidence for detection to be valid
+    min_area_ratio: 0.001  # Minimum area ratio (bbox_area / image_area)
+  
+  # Base alignment
+  base:
+    center_tol_px: 20  # Horizontal centering tolerance in pixels
+    search_rotation_step_deg: 15  # Rotation step for SEARCH phase
+    search_rotation_duration_s: 0.3  # Duration for each search rotation
+    max_search_rotations: 4  # Max rotations before expanding search
+    approach_velocity_mm_s: 50.0  # Forward velocity during APPROACH
+    approach_duration_s: 0.3  # Duration for each approach step
+  
+  # Approach phase
+  approach:
+    near_threshold: 0.05  # Area ratio to switch from APPROACH to PREGRASP
+    # When target area_ratio >= near_threshold, switch to PREGRASP
+  
+  # Arm alignment (visual servoing)
+  arm:
+    align_step_max_mm: 10  # Maximum arm movement per alignment step (in cm, but converted)
+    align_step_max_cm: 1.0  # Maximum arm movement per alignment step
+    grasp_pixel_offset_y: 30  # Offset below image center for grasp target (pixels)
+    # Target pixel for grasp: (image_center_x, image_center_y + grasp_pixel_offset_y)
+    visual_servo_tolerance_px: 10  # Pixel tolerance for visual servoing completion
+  
+  # Grasp phase
+  grasp:
+    max_attempts: 3  # Maximum grasp attempts before recovery
+    approach_z_offset_cm: -2.0  # Z offset for approach (negative = down)
+    lift_z_offset_cm: 5.0  # Z offset for lift after grasp (positive = up)
+    gripper_close_delay_s: 0.5  # Delay after closing gripper before lifting
+  
+  # Recovery
+  recovery:
+    backtrack_steps: 2  # Number of steps to backtrack on failure
+    retry_delay_s: 1.0  # Delay before retry
+  
+  # General
+  general:
+    observation_delay_s: 0.2  # Delay after action before taking new observation
+    max_iterations: 500  # Maximum iterations before timeout
+    stuck_threshold: 10  # If same action repeated N times, trigger recovery
+
