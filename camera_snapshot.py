@@ -9,15 +9,20 @@ import urllib.request
 import numpy as np
 import sys
 import argparse
+import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 
-def capture_snapshot(ip_address="192.168.86.60", port=8080, output_file="snapshot.jpg", timeout=10):
+def capture_snapshot(ip_address=None, port=8080, output_file="snapshot.jpg", timeout=10):
     """
     Capture a snapshot from the MJPEG camera feed.
     
     Args:
-        ip_address: IP address of the robot (default: 192.168.86.60)
+        ip_address: IP address of the robot (default: from .env ROBOT_IP)
         port: Port number for camera feed (default: 8080)
         output_file: Output filename for the snapshot (default: snapshot.jpg)
         timeout: Connection timeout in seconds (default: 10)
@@ -25,6 +30,12 @@ def capture_snapshot(ip_address="192.168.86.60", port=8080, output_file="snapsho
     Returns:
         bool: True if successful, False otherwise
     """
+    # Get IP from .env if not provided
+    if ip_address is None:
+        ip_address = os.getenv("ROBOT_IP")
+        if ip_address is None:
+            raise ValueError("ROBOT_IP must be set in .env file or provided as argument")
+    
     # Construct camera feed URL
     camera_url = f"http://{ip_address}:{port}/"
     
@@ -84,8 +95,8 @@ def main():
     )
     parser.add_argument(
         "--ip",
-        default="192.168.86.60",
-        help="IP address of the robot (default: 192.168.86.60)"
+        default=None,
+        help="IP address of the robot (default: from .env ROBOT_IP, required if not in .env)"
     )
     parser.add_argument(
         "--port",

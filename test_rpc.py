@@ -11,7 +11,12 @@ import json
 import requests
 import socket
 import time
+import os
 from typing import List, Dict, Any, Optional
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 
 def detect_protocol(ip_address: str, port: int, timeout: int = 10) -> str:
@@ -691,8 +696,8 @@ def main():
     )
     parser.add_argument(
         "--ip",
-        default="192.168.86.60",
-        help="IP address of the robot (default: 192.168.86.60)"
+        default=None,
+        help="IP address of the robot (default: from .env ROBOT_IP, required if not in .env)"
     )
     parser.add_argument(
         "--port",
@@ -719,6 +724,14 @@ def main():
     
     args = parser.parse_args()
     
+    # Get IP from .env if not provided
+    ip_address = args.ip
+    if ip_address is None:
+        ip_address = os.getenv("ROBOT_IP")
+        if ip_address is None:
+            print("Error: ROBOT_IP must be set in .env file or provided as --ip argument")
+            sys.exit(1)
+    
     print("=" * 60)
     print("MasterPi RPC Server Test")
     print("=" * 60)
@@ -726,12 +739,12 @@ def main():
     
     # First, detect which protocol the server uses
     print("Detecting RPC protocol...")
-    protocol = detect_protocol(args.ip, args.port, args.timeout)
+    protocol = detect_protocol(ip_address, args.port, args.timeout)
     
     if protocol == "jsonrpc":
         print("✓ Detected JSON-RPC protocol")
         print()
-        jsonrpc_available = test_jsonrpc(args.ip, args.port, args.timeout)
+        jsonrpc_available = test_jsonrpc(ip_address, args.port, args.timeout)
         
         if jsonrpc_available:
             print()
@@ -742,7 +755,7 @@ def main():
             # If --test-level1 flag is set, test Level 1 functions
             if args.test_level1:
                 print()
-                test_level1_results = test_level1_functions(args.ip, args.port, args.timeout)
+                test_level1_results = test_level1_functions(ip_address, args.port, args.timeout)
                 print()
                 print("=" * 60)
                 print("Level 1 Function Testing Completed")
@@ -752,13 +765,13 @@ def main():
                 print("  However, method introspection is not available.")
                 print("  Please refer to the RPC server documentation for available methods.")
                 print("  You can call methods using JSON-RPC format:")
-                print(f"    POST http://{args.ip}:{args.port}/")
+                print(f"    POST http://{ip_address}:{args.port}/")
                 print('    {"jsonrpc": "2.0", "method": "method_name", "params": [], "id": 1}')
                 print("\n  To test Level 1 functions, use: --test-level1")
             sys.exit(0)
         else:
             print("\n✗ Could not connect to RPC server")
-            print(f"  Check that the server is running at {args.ip}:{args.port}")
+            print(f"  Check that the server is running at {ip_address}:{args.port}")
             sys.exit(1)
     elif protocol == "xmlrpc":
         print("✓ Detected XML-RPC protocol")
@@ -768,12 +781,12 @@ def main():
         print()
     
     # Try XML-RPC first (or if protocol is unknown)
-    proxy = test_xmlrpc(args.ip, args.port, args.timeout)
+    proxy = test_xmlrpc(ip_address, args.port, args.timeout)
     
     if proxy is None:
         # Try JSON-RPC if XML-RPC failed
         print()
-        jsonrpc_available = test_jsonrpc(args.ip, args.port, args.timeout)
+        jsonrpc_available = test_jsonrpc(ip_address, args.port, args.timeout)
         
         if jsonrpc_available:
             print()
@@ -784,7 +797,7 @@ def main():
             # If --test-level1 flag is set, test Level 1 functions
             if args.test_level1:
                 print()
-                test_level1_results = test_level1_functions(args.ip, args.port, args.timeout)
+                test_level1_results = test_level1_functions(ip_address, args.port, args.timeout)
                 print()
                 print("=" * 60)
                 print("Level 1 Function Testing Completed")
@@ -794,13 +807,13 @@ def main():
                 print("  However, method introspection is not available.")
                 print("  Please refer to the RPC server documentation for available methods.")
                 print("  You can call methods using JSON-RPC format:")
-                print(f"    POST http://{args.ip}:{args.port}/")
+                print(f"    POST http://{ip_address}:{args.port}/")
                 print('    {"jsonrpc": "2.0", "method": "method_name", "params": [], "id": 1}')
                 print("\n  To test Level 1 functions, use: --test-level1")
             sys.exit(0)
         else:
             print("\n✗ Could not connect to RPC server")
-            print(f"  Check that the server is running at {args.ip}:{args.port}")
+            print(f"  Check that the server is running at {ip_address}:{args.port}")
             sys.exit(1)
     
     print()

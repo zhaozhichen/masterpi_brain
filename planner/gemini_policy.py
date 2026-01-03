@@ -5,6 +5,9 @@ Uses Google GenAI API for task planning and tool selection.
 """
 
 import os
+import json
+import logging
+from pathlib import Path
 from typing import Dict, Any, Optional
 from google import genai
 from PIL import Image
@@ -14,6 +17,10 @@ import cv2
 from dotenv import load_dotenv
 
 from planner.prompts import get_system_prompt, format_state_summary, get_tool_descriptions
+
+# Set up logger for Gemini API calls
+gemini_logger = logging.getLogger("gemini_api")
+gemini_logger.setLevel(logging.DEBUG)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -41,14 +48,16 @@ class GeminiPolicy:
             http_options=genai_types.HttpOptions(timeout=60.0)  # 60 second timeout
         )
         
-        # Model name (Robotics-ER 1.5 when available)
+        # Model name: Gemini Robotics-ER 1.5
         # Check: https://ai.google.dev/gemini-api/docs/models/gemini-robotics-er-1.5
-        # For now, using a standard Gemini model
-        self.model_name = "gemini-3-pro-preview"
+        # self.model_name = "gemini-3-pro-preview"
         # self.model_name = "gemini-3-flash-preview"
+        self.model_name = "gemini-robotics-er-1.5"
         
-        # System prompt
-        self.system_prompt = get_system_prompt()
+        # System prompt (will be updated with task description in plan method)
+        self.base_system_prompt = get_system_prompt()
+        self.system_prompt = self.base_system_prompt
+        self.current_task = None
         
         # Conversation history
         self.messages = []
@@ -59,6 +68,10 @@ class GeminiPolicy:
         # Phase (for compatibility with executor)
         # Gemini policy doesn't use explicit phases, but we track it for logging
         self.phase = "PLANNING"  # Simple string for compatibility
+        
+        # Log directory for detailed prompts
+        self.log_dir = Path("logs")
+        self.current_log_dir = None
     
     def set_image_size(self, width: int, height: int):
         """Set image dimensions (for compatibility with executor)."""
@@ -97,6 +110,13 @@ class GeminiPolicy:
         Returns:
             Action plan dict with "action", "params", "phase", "why"
         """
+        # Update current task if provided
+        task_desc = state_summary.get('task', '')
+        if task_desc and task_desc != self.current_task:
+            self.current_task = task_desc
+            # Update system prompt with task description
+            self.system_prompt = get_system_prompt(task_description=task_desc)
+        
         # Format state summary
         state_text = format_state_summary(state_summary)
         
@@ -104,16 +124,22 @@ class GeminiPolicy:
         if last_action_result:
             state_text += f"\nLast action result: {last_action_result}"
         
-        # Build prompt with system instruction
+        # Build prompt with system instruction (includes task description)
         prompt = f"{self.system_prompt}\n\n{state_text}"
         
         # Prepare contents - start with text
         contents = [prompt]
         
-        # Add image if available
+        # Track image info for logging
+        image_info = None
         if image is not None:
             try:
                 image_bytes = self._image_to_bytes(image)
+                image_info = {
+                    "has_image": True,
+                    "image_size_bytes": len(image_bytes),
+                    "image_shape": list(image.shape) if hasattr(image, 'shape') else None
+                }
                 # Add image as Part using types
                 from google.genai import types
                 contents.append(types.Part.from_bytes(
@@ -122,6 +148,9 @@ class GeminiPolicy:
                 ))
             except Exception as e:
                 print(f"Warning: Failed to encode image: {e}")
+                image_info = {"has_image": False, "error": str(e)}
+        else:
+            image_info = {"has_image": False}
         
         try:
             # Generate response using new API
@@ -143,11 +172,38 @@ class GeminiPolicy:
             # Create Tool with functionDeclarations
             tools = [types.Tool(functionDeclarations=function_declarations)]
             
-            # Build config - try without tools first to test
+            # Build config
             config = types.GenerateContentConfig(
                 temperature=0.3,
                 tools=tools if function_declarations else None
             )
+            
+            # Prepare detailed prompt log
+            prompt_log = {
+                "model": self.model_name,
+                "system_prompt": self.system_prompt,
+                "state_summary": state_text,
+                "full_prompt": prompt,
+                "image_info": image_info,
+                "tools": [
+                    {
+                        "name": tool_desc["name"],
+                        "description": tool_desc["description"],
+                        "parameters": tool_desc["parameters"]
+                    }
+                    for tool_desc in tool_descs
+                ],
+                "config": {
+                    "temperature": 0.3,
+                    "has_tools": len(function_declarations) > 0,
+                    "num_tools": len(function_declarations)
+                },
+                "iteration": state_summary.get("iteration", 0),
+                "task": state_summary.get("task", "unknown")
+            }
+            
+            # Log prompt to file
+            self._log_prompt(prompt_log)
             
             response = self.client.models.generate_content(
                 model=self.model_name,
@@ -176,6 +232,13 @@ class GeminiPolicy:
                         if hasattr(part, 'function_call') and part.function_call:
                             function_call = part.function_call
             
+            # Log response
+            response_log = {
+                "has_function_call": function_call is not None,
+                "response_text": response_text,
+                "function_call": None
+            }
+            
             # If we have a function call, use it
             if function_call:
                 action_name = function_call.name
@@ -194,12 +257,23 @@ class GeminiPolicy:
                         except:
                             params = {}
                 
+                response_log["function_call"] = {
+                    "name": action_name,
+                    "params": params
+                }
+                
+                # Log response
+                self._log_response(response_log, state_summary.get("iteration", 0))
+                
                 return {
                     "action": action_name,
                     "params": params,
                     "phase": state_summary.get("phase", "unknown"),
                     "why": response_text or f"Gemini selected {action_name}"
                 }
+            
+            # Log response even if no function call
+            self._log_response(response_log, state_summary.get("iteration", 0))
             
             # No function call found, return safe action with response text
             return {
@@ -261,3 +335,47 @@ class GeminiPolicy:
     def reset(self):
         """Reset conversation history."""
         self.messages = []
+        self.current_task = None
+        self.system_prompt = self.base_system_prompt
+        self.current_log_dir = None
+    
+    def set_log_dir(self, log_dir: Path):
+        """Set log directory for prompt logging."""
+        self.current_log_dir = log_dir
+        if log_dir:
+            (log_dir / "gemini_prompts").mkdir(parents=True, exist_ok=True)
+    
+    def _log_prompt(self, prompt_log: Dict[str, Any]):
+        """Log detailed prompt to file."""
+        if not self.current_log_dir:
+            return
+        
+        prompt_dir = self.current_log_dir / "gemini_prompts"
+        prompt_dir.mkdir(exist_ok=True)
+        
+        iteration = prompt_log.get("iteration", 0)
+        prompt_file = prompt_dir / f"prompt_{iteration:05d}.json"
+        
+        try:
+            with open(prompt_file, 'w', encoding='utf-8') as f:
+                json.dump(prompt_log, f, indent=2, ensure_ascii=False, default=str)
+            print(f"Gemini prompt logged: {prompt_file}")
+        except Exception as e:
+            print(f"Warning: Failed to log prompt: {e}")
+    
+    def _log_response(self, response_log: Dict[str, Any], iteration: int):
+        """Log response to file."""
+        if not self.current_log_dir:
+            return
+        
+        prompt_dir = self.current_log_dir / "gemini_prompts"
+        prompt_dir.mkdir(exist_ok=True)
+        
+        response_file = prompt_dir / f"response_{iteration:05d}.json"
+        
+        try:
+            with open(response_file, 'w', encoding='utf-8') as f:
+                json.dump(response_log, f, indent=2, ensure_ascii=False, default=str)
+            print(f"Gemini response logged: {response_file}")
+        except Exception as e:
+            print(f"Warning: Failed to log response: {e}")

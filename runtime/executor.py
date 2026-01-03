@@ -43,7 +43,9 @@ class Executor:
         """
         # Get defaults from environment variables
         if robot_ip is None:
-            robot_ip = os.getenv("ROBOT_IP", "192.168.86.60")
+            robot_ip = os.getenv("ROBOT_IP")
+            if robot_ip is None:
+                raise ValueError("ROBOT_IP must be set in .env file or provided as argument")
         if rpc_port is None:
             rpc_port = int(os.getenv("RPC_PORT", "9030"))
         if camera_port is None:
@@ -76,7 +78,7 @@ class Executor:
         self.last_action_result = None
         self.stuck_counter = 0
         self.last_action_name = None
-        self.current_task = "pick up red block"
+        self.current_task = None  # Will be set in run()
     
     def observe(self) -> tuple[bool, Optional[Any], Dict[str, Any]]:
         """
@@ -188,7 +190,7 @@ class Executor:
         else:
             return (False, {}, f"Unknown action: {action_name}")
     
-    def run(self, task: str = "pick up red block", max_iterations: int = 500):
+    def run(self, task: str, max_iterations: int = 500):
         """
         Run main execution loop.
         
@@ -204,6 +206,12 @@ class Executor:
         
         # Start logging session
         self.logger.start_session(task)
+        
+        # Set log directory for Gemini policy
+        if isinstance(self.policy, GeminiPolicy):
+            session_dir = self.logger.get_session_dir()
+            if session_dir:
+                self.policy.set_log_dir(session_dir)
         
         # Reset policy
         self.policy.reset()

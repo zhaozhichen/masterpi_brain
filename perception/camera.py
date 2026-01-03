@@ -29,7 +29,9 @@ class Camera:
             timeout: Connection timeout in seconds
         """
         if ip_address is None:
-            ip_address = os.getenv("ROBOT_IP", "192.168.86.60")
+            ip_address = os.getenv("ROBOT_IP")
+            if ip_address is None:
+                raise ValueError("ROBOT_IP must be set in .env file or provided as argument")
         if port is None:
             port = int(os.getenv("CAMERA_PORT", "8080"))
         

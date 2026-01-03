@@ -44,7 +44,7 @@ load_dotenv()  # 从 .env 读取 GEMINI_API_KEY, ROBOT_IP, RPC_PORT, CAMERA_PORT
 # 1.2 解析命令行参数
 args.task = "pick up red block"
 args.policy = "gemini"
-args.ip = "192.168.86.60"  # 从 .env 或默认值
+args.ip = os.getenv("ROBOT_IP")  # 从 .env 读取（必须设置）
 args.rpc_port = 9030       # 从 .env 或默认值
 args.camera_port = 8080    # 从 .env 或默认值
 
@@ -60,7 +60,7 @@ if args.policy == "gemini":
 
 ```python
 executor = Executor(
-    robot_ip="192.168.86.60",
+    robot_ip=os.getenv("ROBOT_IP"),  # 从 .env 读取
     rpc_port=9030,
     camera_port=8080,
     policy_type="gemini",
@@ -71,7 +71,7 @@ executor = Executor(
 **Executor 初始化过程：**
 
 1. **创建 RPC 客户端** (`RPCClient`)
-   - 连接到 `http://192.168.86.60:9030/`
+   - 连接到 `http://{ROBOT_IP}:9030/`（IP 从 .env 读取）
    - 准备发送 JSON-RPC 2.0 请求
 
 2. **创建技能层** (`RobotSkills`)
@@ -79,7 +79,7 @@ executor = Executor(
    - 包含：`base_step()`, `arm_move_xyz()`, `gripper_open()`, `gripper_close()` 等
 
 3. **创建相机对象** (`Camera`)
-   - 准备连接 MJPEG 流：`http://192.168.86.60:8080/`
+   - 准备连接 MJPEG 流：`http://{ROBOT_IP}:8080/`（IP 从 .env 读取）
    - 但此时**还未连接**（延迟连接）
 
 4. **创建检测器** (`RedBlockDetector`)
@@ -135,7 +135,7 @@ obs_success, image, detection = self.observe()
 
 1. **连接 MJPEG 流**（如果未连接）
    ```
-   URL: http://192.168.86.60:8080/
+   URL: http://{ROBOT_IP}:8080/（从 .env 读取）
    方法: urllib.request.urlopen()
    ```
 
@@ -374,7 +374,7 @@ duration = clamp(0.3, 0.2, 0.5)         # → 0.3 ✓
 1. **发送 RPC 调用**
    ```python
    # JSON-RPC 2.0 请求
-   POST http://192.168.86.60:9030/
+   POST http://{ROBOT_IP}:9030/（从 .env 读取）
    {
        "jsonrpc": "2.0",
        "method": "SetMecanumVelocity",
@@ -391,7 +391,7 @@ duration = clamp(0.3, 0.2, 0.5)         # → 0.3 ✓
 3. **停止底盘**
    ```python
    # 发送停止命令
-   POST http://192.168.86.60:9030/
+   POST http://{ROBOT_IP}:9030/（从 .env 读取）
    {
        "jsonrpc": "2.0",
        "method": "ResetMecanumMotors",

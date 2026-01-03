@@ -41,15 +41,15 @@ Examples:
     parser.add_argument(
         "--task",
         type=str,
-        default="pick up red block",
-        help="Task description (default: 'pick up red block')"
+        required=True,
+        help="Task description in natural language (e.g., 'pick up red block', 'move the blue cup to the table')"
     )
     
     parser.add_argument(
         "--ip",
         type=str,
-        default=os.getenv("ROBOT_IP", "192.168.86.60"),
-        help=f"Robot IP address (default: from .env ROBOT_IP or 192.168.86.60)"
+        default=os.getenv("ROBOT_IP"),
+        help="Robot IP address (default: from .env ROBOT_IP, must be set if not provided)"
     )
     
     parser.add_argument(

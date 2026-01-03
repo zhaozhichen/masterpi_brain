@@ -5,9 +5,14 @@ System prompts and templates for Gemini Robotics-ER integration.
 from typing import Dict, Any
 
 
-def get_system_prompt() -> str:
-    """Get system prompt for Gemini Robotics-ER."""
-    return """You are a high-level robot controller for a MasterPi robot with:
+def get_system_prompt(task_description: str = None) -> str:
+    """
+    Get system prompt for Gemini Robotics-ER.
+    
+    Args:
+        task_description: Optional task description to include in prompt
+    """
+    base_prompt = """You are a high-level robot controller for a MasterPi robot with:
 - Eye-in-hand camera (mounted on end-effector)
 - Mecanum wheel holonomic base
 - 6-DOF robotic arm with IK control
@@ -23,8 +28,13 @@ CRITICAL RULES:
 4. If target is not visible → use scan/search actions.
 5. If action fails → try recovery (backtrack, adjust, or restart search).
 6. Never output continuous long-duration movements. Always use discrete steps.
+7. You must identify targets from the camera image yourself - use visual understanding to locate objects described in the task. The detection results provided are optional hints, but you should rely primarily on your own visual analysis of the image.
 
 Your goal is to execute the given task by making small, safe, observable steps."""
+    
+    if task_description:
+        return f"{base_prompt}\n\nCurrent task: {task_description}"
+    return base_prompt
 
 
 def format_state_summary(state: Dict[str, Any]) -> str:

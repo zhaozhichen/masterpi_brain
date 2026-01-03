@@ -47,7 +47,7 @@ EOF
 
 Or manually edit `.env` file:
 - `GEMINI_API_KEY`: Your Gemini API key (required for Gemini policy)
-- `ROBOT_IP`: Robot IP address (default: 192.168.86.60)
+- `ROBOT_IP`: Robot IP address (required, no default)
 - `RPC_PORT`: RPC server port (default: 9030)
 - `CAMERA_PORT`: Camera stream port (default: 8080)
 
