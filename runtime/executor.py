@@ -5,8 +5,10 @@ Enforces single skill call per iteration, parameter validation, and safety.
 """
 
 import time
+import os
 from typing import Dict, Any, Optional
 import yaml
+from dotenv import load_dotenv
 
 from masterpi_rpc.rpc_client import RPCClient
 from masterpi_rpc.skills import RobotSkills
@@ -16,26 +18,37 @@ from planner.fsm_policy import FSMPolicy, Phase
 from planner.gemini_policy import GeminiPolicy
 from runtime.logger import Logger
 
+# Load environment variables
+load_dotenv()
+
 
 class Executor:
     """Main execution loop for robot control."""
     
     def __init__(self, 
-                 robot_ip: str = "192.168.86.60",
-                 rpc_port: int = 9030,
-                 camera_port: int = 8080,
+                 robot_ip: str = None,
+                 rpc_port: int = None,
+                 camera_port: int = None,
                  policy_type: str = "fsm",
                  thresholds_path: str = "config/thresholds.yaml"):
         """
         Initialize executor.
         
         Args:
-            robot_ip: Robot IP address
-            rpc_port: RPC server port
-            camera_port: Camera stream port
+            robot_ip: Robot IP address (default: from .env ROBOT_IP)
+            rpc_port: RPC server port (default: from .env RPC_PORT)
+            camera_port: Camera stream port (default: from .env CAMERA_PORT)
             policy_type: Policy type ("fsm" or "gemini")
             thresholds_path: Path to thresholds config
         """
+        # Get defaults from environment variables
+        if robot_ip is None:
+            robot_ip = os.getenv("ROBOT_IP", "192.168.86.60")
+        if rpc_port is None:
+            rpc_port = int(os.getenv("RPC_PORT", "9030"))
+        if camera_port is None:
+            camera_port = int(os.getenv("CAMERA_PORT", "8080"))
+        
         # Initialize components
         self.rpc_client = RPCClient(robot_ip, rpc_port)
         self.skills = RobotSkills(self.rpc_client)
@@ -87,8 +100,8 @@ class Executor:
         # Detect target
         detection = self.detector.detect(image)
         
-        # Set image size in policy if needed
-        if image is not None:
+        # Set image size in policy if needed (only for FSM policy)
+        if image is not None and isinstance(self.policy, FSMPolicy):
             h, w = image.shape[:2]
             self.policy.set_image_size(w, h)
         
@@ -137,8 +150,9 @@ class Executor:
         if action_name == self.last_action_name:
             self.stuck_counter += 1
             if self.stuck_counter >= self.thresholds['general']['stuck_threshold']:
-                # Force recovery
-                self.policy.phase = Phase.RECOVER
+                # Force recovery (only for FSM policy)
+                if isinstance(self.policy, FSMPolicy):
+                    self.policy.phase = Phase.RECOVER
                 return (False, {}, "Stuck: same action repeated too many times")
         else:
             self.stuck_counter = 0
@@ -204,9 +218,11 @@ class Executor:
                 if not obs_success:
                     print("Warning: Observation failed")
                 
+                # Get phase string (handle both FSM Phase enum and Gemini string)
+                phase_str = self.policy.phase.value if hasattr(self.policy.phase, 'value') else str(self.policy.phase)
                 print(f"Detection: found={detection.get('found')}, "
                       f"area_ratio={detection.get('area_ratio', 0):.4f}, "
-                      f"phase={self.policy.phase.value}")
+                      f"phase={phase_str}")
                 
                 # Check if done (only for FSM policy)
                 if isinstance(self.policy, FSMPolicy):
@@ -230,9 +246,11 @@ class Executor:
                     print(f"Action failed: {error}")
                 
                 # Create state summary
+                # Get phase string (handle both FSM Phase enum and Gemini string)
+                phase_str = self.policy.phase.value if hasattr(self.policy.phase, 'value') else str(self.policy.phase)
                 state_summary = {
                     "task": task,
-                    "phase": self.policy.phase.value,
+                    "phase": phase_str,
                     "iteration": self.iteration,
                     "detection": detection,
                     "last_action": action_plan.get("action"),

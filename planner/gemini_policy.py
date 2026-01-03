@@ -1,13 +1,12 @@
 """
 Gemini Robotics-ER 1.5 policy for high-level planning.
 
-Uses Google Gemini Robotics-ER API for task planning and tool selection.
+Uses Google GenAI API for task planning and tool selection.
 """
 
 import os
-import base64
 from typing import Dict, Any, Optional
-import google.generativeai as genai
+from google import genai
 from PIL import Image
 import io
 import numpy as np
@@ -35,37 +34,38 @@ class GeminiPolicy:
         if not api_key:
             raise ValueError("GEMINI_API_KEY environment variable not set")
         
-        # Configure Gemini
-        genai.configure(api_key=api_key)
+        # Initialize GenAI client with increased timeout
+        from google.genai import types as genai_types
+        self.client = genai.Client(
+            api_key=api_key,
+            http_options=genai_types.HttpOptions(timeout=60.0)  # 60 second timeout
+        )
         
-        # Initialize model (Robotics-ER 1.5)
-        # Note: Update model name when Robotics-ER 1.5 is available
-        # For now, using a standard Gemini model with function calling
+        # Model name (Robotics-ER 1.5 when available)
         # Check: https://ai.google.dev/gemini-api/docs/models/gemini-robotics-er-1.5
-        try:
-            # Try Robotics-ER model first
-            self.model = genai.GenerativeModel(
-                model_name="gemini-robotics-er-1.5",  # Update when available
-                tools=get_tool_descriptions()
-            )
-        except:
-            # Fallback to standard model with function calling
-            self.model = genai.GenerativeModel(
-                model_name="gemini-2.0-flash-exp",
-                tools=get_tool_descriptions()
-            )
+        # For now, using a standard Gemini model
+        self.model_name = "gemini-3-pro-preview"
+        # self.model_name = "gemini-3-flash-preview"
+        
+        # System prompt
+        self.system_prompt = get_system_prompt()
         
         # Conversation history
-        self.conversation_history = []
+        self.messages = []
         
-        # Initialize with system prompt
-        self.conversation_history.append({
-            "role": "user",
-            "parts": [get_system_prompt()]
-        })
+        # Image size (for compatibility with executor)
+        self.image_center = None
+        
+        # Phase (for compatibility with executor)
+        # Gemini policy doesn't use explicit phases, but we track it for logging
+        self.phase = "PLANNING"  # Simple string for compatibility
     
-    def _image_to_base64(self, image: np.ndarray) -> str:
-        """Convert numpy image to base64 string."""
+    def set_image_size(self, width: int, height: int):
+        """Set image dimensions (for compatibility with executor)."""
+        self.image_center = (width // 2, height // 2)
+    
+    def _image_to_bytes(self, image: np.ndarray) -> bytes:
+        """Convert numpy image to bytes."""
         # Convert BGR to RGB if needed
         if len(image.shape) == 3 and image.shape[2] == 3:
             image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -75,13 +75,10 @@ class GeminiPolicy:
         # Convert to PIL Image
         pil_image = Image.fromarray(image_rgb)
         
-        # Convert to base64
+        # Convert to bytes
         buffer = io.BytesIO()
         pil_image.save(buffer, format="JPEG")
-        image_bytes = buffer.getvalue()
-        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
-        
-        return image_base64
+        return buffer.getvalue()
     
     def plan(self, 
              image: Optional[np.ndarray],
@@ -107,80 +104,160 @@ class GeminiPolicy:
         if last_action_result:
             state_text += f"\nLast action result: {last_action_result}"
         
-        # Prepare user message
-        user_parts = [state_text]
+        # Build prompt with system instruction
+        prompt = f"{self.system_prompt}\n\n{state_text}"
+        
+        # Prepare contents - start with text
+        contents = [prompt]
         
         # Add image if available
         if image is not None:
             try:
-                image_base64 = self._image_to_base64(image)
-                user_parts.append({
-                    "inline_data": {
-                        "mime_type": "image/jpeg",
-                        "data": image_base64
-                    }
-                })
+                image_bytes = self._image_to_bytes(image)
+                # Add image as Part using types
+                from google.genai import types
+                contents.append(types.Part.from_bytes(
+                    data=image_bytes,
+                    mime_type="image/jpeg"
+                ))
             except Exception as e:
                 print(f"Warning: Failed to encode image: {e}")
         
-        # Add to conversation
-        self.conversation_history.append({
-            "role": "user",
-            "parts": user_parts
-        })
-        
         try:
-            # Generate response
-            response = self.model.generate_content(
-                self.conversation_history,
-                generation_config={
-                    "temperature": 0.3,  # Lower temperature for more deterministic behavior
-                }
+            # Generate response using new API
+            from google.genai import types
+            
+            # Convert tool descriptions to FunctionDeclarations
+            tool_descs = get_tool_descriptions()
+            function_declarations = []
+            for tool_desc in tool_descs:
+                # Convert parameters dict to Schema using parametersJsonSchema
+                params_dict = tool_desc["parameters"]
+                func_decl = types.FunctionDeclaration(
+                    name=tool_desc["name"],
+                    description=tool_desc["description"],
+                    parametersJsonSchema=params_dict
+                )
+                function_declarations.append(func_decl)
+            
+            # Create Tool with functionDeclarations
+            tools = [types.Tool(functionDeclarations=function_declarations)]
+            
+            # Build config - try without tools first to test
+            config = types.GenerateContentConfig(
+                temperature=0.3,
+                tools=tools if function_declarations else None
             )
             
-            # Add response to history
-            self.conversation_history.append({
-                "role": "model",
-                "parts": [response.text]
-            })
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=config
+            )
             
-            # Parse function call from response
-            # Gemini may return function calls in the response
+            # Extract response text and function calls
+            response_text = ""
+            function_call = None
+            
+            # Check for function calls directly in response
             if hasattr(response, 'function_calls') and response.function_calls:
-                func_call = response.function_calls[0]
-                action_name = func_call.name
-                params = func_call.args if hasattr(func_call, 'args') else {}
+                function_call = response.function_calls[0]
+            
+            # Also check in candidates (fallback)
+            if not function_call and hasattr(response, 'candidates') and len(response.candidates) > 0:
+                candidate = response.candidates[0]
+                if hasattr(candidate, 'content') and candidate.content:
+                    parts = candidate.content.parts
+                    for part in parts:
+                        # Extract text
+                        if hasattr(part, 'text') and part.text:
+                            response_text += part.text
+                        # Extract function call
+                        if hasattr(part, 'function_call') and part.function_call:
+                            function_call = part.function_call
+            
+            # If we have a function call, use it
+            if function_call:
+                action_name = function_call.name
+                # Extract parameters
+                params = {}
+                if hasattr(function_call, 'args') and function_call.args:
+                    # Convert args to dict
+                    if isinstance(function_call.args, dict):
+                        params = function_call.args
+                    elif hasattr(function_call.args, '__dict__'):
+                        params = dict(function_call.args)
+                    else:
+                        # Try to convert protobuf message to dict
+                        try:
+                            params = {k: v for k, v in function_call.args.items()}
+                        except:
+                            params = {}
                 
                 return {
                     "action": action_name,
                     "params": params,
                     "phase": state_summary.get("phase", "unknown"),
-                    "why": response.text or f"Gemini selected {action_name}"
+                    "why": response_text or f"Gemini selected {action_name}"
                 }
-            else:
-                # Try to parse action from text response
-                # Fallback: return a safe action
-                return {
-                    "action": "base_stop",
-                    "params": {},
-                    "phase": state_summary.get("phase", "unknown"),
-                    "why": f"Gemini response: {response.text[:100]}"
-                }
-        
-        except Exception as e:
-            print(f"Gemini API error: {e}")
-            # Fallback to safe action
+            
+            # No function call found, return safe action with response text
             return {
                 "action": "base_stop",
                 "params": {},
                 "phase": state_summary.get("phase", "unknown"),
-                "why": f"Error: {str(e)}"
+                "why": f"Gemini response: {response_text[:200] if response_text else 'No response'}"
             }
+        
+        except Exception as e:
+            error_msg = str(e)
+            # Don't print full traceback for timeout errors (too verbose)
+            if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                print(f"GenAI API timeout (this may be due to network issues)")
+            else:
+                print(f"GenAI API error: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            # Fallback: use simple heuristic based on detection
+            # If target found but small, approach; if large, use arm; if not found, search
+            if detection.get('found'):
+                area_ratio = detection.get('area_ratio', 0.0)
+                if area_ratio < 0.05:
+                    # Target far, approach
+                    return {
+                        "action": "base_step",
+                        "params": {
+                            "velocity": 50.0,
+                            "direction": 0.0,
+                            "angular_rate": 0.0,
+                            "duration": 0.3
+                        },
+                        "phase": state_summary.get("phase", "unknown"),
+                        "why": f"API timeout fallback: approaching target (area={area_ratio:.4f})"
+                    }
+                else:
+                    # Target close, use arm
+                    return {
+                        "action": "arm_to_safe_pose",
+                        "params": {},
+                        "phase": state_summary.get("phase", "unknown"),
+                        "why": f"API timeout fallback: target close (area={area_ratio:.4f}), moving arm"
+                    }
+            else:
+                # Target not found, search
+                return {
+                    "action": "base_step",
+                    "params": {
+                        "velocity": 0.0,
+                        "direction": 0.0,
+                        "angular_rate": 15.0,  # Rotate
+                        "duration": 0.3
+                    },
+                    "phase": state_summary.get("phase", "unknown"),
+                    "why": "API timeout fallback: target not found, searching"
+                }
     
     def reset(self):
         """Reset conversation history."""
-        self.conversation_history = [{
-            "role": "user",
-            "parts": [get_system_prompt()]
-        }]
-
+        self.messages = []

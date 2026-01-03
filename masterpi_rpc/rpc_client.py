@@ -6,22 +6,32 @@ All methods return (success: bool, result: Any, error: str).
 """
 
 import requests
+import os
 from typing import Tuple, Any, Optional, List
 import time
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 
 class RPCClient:
     """JSON-RPC 2.0 client for MasterPi robot."""
     
-    def __init__(self, ip_address: str = "192.168.86.60", port: int = 9030, timeout: int = 10):
+    def __init__(self, ip_address: str = None, port: int = None, timeout: int = 10):
         """
         Initialize RPC client.
         
         Args:
-            ip_address: Robot IP address
-            port: RPC server port (default: 9030)
+            ip_address: Robot IP address (default: from .env ROBOT_IP)
+            port: RPC server port (default: from .env RPC_PORT)
             timeout: Request timeout in seconds
         """
+        if ip_address is None:
+            ip_address = os.getenv("ROBOT_IP", "192.168.86.60")
+        if port is None:
+            port = int(os.getenv("RPC_PORT", "9030"))
+        
         self.ip_address = ip_address
         self.port = port
         self.timeout = timeout

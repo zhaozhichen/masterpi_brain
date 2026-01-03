@@ -48,22 +48,22 @@ Examples:
     parser.add_argument(
         "--ip",
         type=str,
-        default="192.168.86.60",
-        help="Robot IP address (default: 192.168.86.60)"
+        default=os.getenv("ROBOT_IP", "192.168.86.60"),
+        help=f"Robot IP address (default: from .env ROBOT_IP or 192.168.86.60)"
     )
     
     parser.add_argument(
         "--rpc-port",
         type=int,
-        default=9030,
-        help="RPC server port (default: 9030)"
+        default=int(os.getenv("RPC_PORT", "9030")),
+        help=f"RPC server port (default: from .env RPC_PORT or 9030)"
     )
     
     parser.add_argument(
         "--camera-port",
         type=int,
-        default=8080,
-        help="Camera stream port (default: 8080)"
+        default=int(os.getenv("CAMERA_PORT", "8080")),
+        help=f"Camera stream port (default: from .env CAMERA_PORT or 8080)"
     )
     
     parser.add_argument(

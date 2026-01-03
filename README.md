@@ -34,10 +34,22 @@ source venv/bin/activate  # On Linux/Mac
 pip install -r requirements.txt
 ```
 
-2. **Set up Gemini API key** (optional, for Gemini policy):
+2. **Configure environment variables** (create `.env` file):
 ```bash
-export GEMINI_API_KEY=your_api_key_here
+# Create .env file with your configuration
+cat > .env << EOF
+GEMINI_API_KEY=your_api_key_here
+ROBOT_IP=192.168.86.60
+RPC_PORT=9030
+CAMERA_PORT=8080
+EOF
 ```
+
+Or manually edit `.env` file:
+- `GEMINI_API_KEY`: Your Gemini API key (required for Gemini policy)
+- `ROBOT_IP`: Robot IP address (default: 192.168.86.60)
+- `RPC_PORT`: RPC server port (default: 9030)
+- `CAMERA_PORT`: Camera stream port (default: 8080)
 
 ## Usage
 

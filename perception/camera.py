@@ -8,21 +8,31 @@ import cv2
 import urllib.request
 import numpy as np
 import time
+import os
 from typing import Tuple, Optional
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 
 class Camera:
     """MJPEG stream camera capture."""
     
-    def __init__(self, ip_address: str = "192.168.86.60", port: int = 8080, timeout: int = 10):
+    def __init__(self, ip_address: str = None, port: int = None, timeout: int = 10):
         """
         Initialize camera.
         
         Args:
-            ip_address: Robot IP address
-            port: Camera stream port (default: 8080)
+            ip_address: Robot IP address (default: from .env ROBOT_IP)
+            port: Camera stream port (default: from .env CAMERA_PORT)
             timeout: Connection timeout in seconds
         """
+        if ip_address is None:
+            ip_address = os.getenv("ROBOT_IP", "192.168.86.60")
+        if port is None:
+            port = int(os.getenv("CAMERA_PORT", "8080"))
+        
         self.ip_address = ip_address
         self.port = port
         self.timeout = timeout
