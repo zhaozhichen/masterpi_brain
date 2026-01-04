@@ -70,6 +70,24 @@ class Executor:
         self.last_action = None
         self.last_action_result = None
         self.current_task = None  # Will be set in run()
+        
+        # Referee: Track recent base_step actions to detect oscillation and ineffective strafing
+        self.recent_base_steps = []  # List of (angular_rate, velocity, direction) tuples
+        self.max_recent_steps = 8  # Track last 8 base_step actions
+        # Post-grasp visual verification flag
+        self.need_post_grasp_check = False
+        
+        # Referee: Track arm movements to detect clamping (coordinates out of workspace)
+        self.recent_arm_moves = []  # List of (requested_x, requested_y, actual_x, actual_y) tuples
+        self.max_recent_arm_moves = 6  # Track last 6 arm movements
+        
+        # Referee: Track grasping attempts to detect repeated failed grasps
+        self.recent_grasp_attempts = []  # List of action names in grasping sequence
+        self.max_grasp_attempts = 20  # Track last 20 actions to detect patterns
+        self.grasp_sequence_pattern = ['arm_move_xyz', 'gripper_open', 'gripper_close', 'arm_to_safe_pose']
+        
+        # Referee: Track target visibility to detect prolonged search
+        self.target_not_visible_count = 0  # Count consecutive iterations where target is not visible
     
     def observe(self) -> tuple[bool, Optional[Any], Dict[str, Any]]:
         """
@@ -113,6 +131,12 @@ class Executor:
         Returns:
             Action plan dict with "action", "params", "phase", "why"
         """
+        # Detect oscillation pattern in recent base_step actions
+        oscillation_hint = self._detect_oscillation()
+        arm_clamping_hint = self._detect_arm_clamping()
+        repeated_grasp_hint = self._detect_repeated_grasp_attempts()
+        prolonged_search_hint = self._detect_prolonged_search()
+        
         # Build state summary for Gemini
         state_summary = {
             "task": self.current_task,
@@ -120,9 +144,163 @@ class Executor:
             "iteration": self.iteration,
             "detection": detection,  # Included for logging, but Gemini ignores it
             "last_action": self.last_action.get("action") if self.last_action else None,
-            "last_action_success": self.last_action_result is not None and self.last_action_result.get("success", False) if self.last_action_result else None
+            "last_action_success": self.last_action_result is not None and self.last_action_result.get("success", False) if self.last_action_result else None,
+            "oscillation_hint": oscillation_hint,  # Referee hint for Gemini
+            "arm_clamping_hint": arm_clamping_hint,  # Referee hint for Gemini
+            "repeated_grasp_hint": repeated_grasp_hint,  # Referee hint for Gemini
+            "prolonged_search_hint": prolonged_search_hint,  # Referee hint for Gemini
+            "post_grasp_check_needed": self.need_post_grasp_check  # Referee hint for Gemini
         }
         return self.policy.plan(image, detection, state_summary, self.last_action_result)
+    
+    def _detect_arm_clamping(self) -> Optional[str]:
+        """
+        Detect if arm movements are being clamped to workspace limits repeatedly.
+        
+        Returns:
+            Hint string if clamping detected, None otherwise
+        """
+        if len(self.recent_arm_moves) < 4:
+            return None
+        
+        # Check if recent arm moves show clamping pattern
+        clamping_count = 0
+        for req_x, req_y, act_x, act_y in self.recent_arm_moves:
+            # Check if requested coordinates were clamped
+            x_clamped = abs(req_x - act_x) > 0.5  # More than 0.5cm difference
+            y_clamped = abs(req_y - act_y) > 0.5
+            if x_clamped or y_clamped:
+                clamping_count += 1
+        
+        # If most recent moves were clamped, it's a problem
+        if clamping_count >= 3:
+            # Get the most recent clamped move to show limits
+            req_x, req_y, act_x, act_y = self.recent_arm_moves[-1]
+            return (f"⚠️ REFEREE HINT: Arm coordinates are being clamped to workspace limits. "
+                   f"Requested ({req_x:.1f}, {req_y:.1f}) was clamped to ({act_x:.1f}, {act_y:.1f}). "
+                   f"Workspace limits: X=[-10, 10] cm, Y=[5, 15] cm. "
+                   f"If target is outside workspace, use base movement to reposition robot, "
+                   f"or adjust approach strategy (e.g., rotate base, change camera angle).")
+        
+        return None
+    
+    def _detect_oscillation(self) -> Optional[str]:
+        """
+        Detect oscillation pattern or ineffective strafing in recent base_step actions.
+        
+        Returns:
+            Hint string if problem detected, None otherwise
+        """
+        if len(self.recent_base_steps) < 6:
+            return None
+        
+        # Extract data
+        angular_rates = [ar for ar, v, d in self.recent_base_steps]
+        velocities = [v for ar, v, d in self.recent_base_steps]
+        directions = [d for ar, v, d in self.recent_base_steps]
+        
+        # Check 1: Rotation oscillation (velocity ≈ 0, angular_rate alternates)
+        rotation_only = all(abs(v) < 1e-6 for v in velocities)
+        if rotation_only:
+            sign_changes = 0
+            for i in range(1, len(angular_rates)):
+                if angular_rates[i] != 0 and angular_rates[i-1] != 0:
+                    if (angular_rates[i] > 0) != (angular_rates[i-1] > 0):
+                        sign_changes += 1
+            
+            if sign_changes >= 4:
+                return ("⚠️ REFEREE HINT: Detected oscillation pattern in recent base_step rotations "
+                       f"(alternating angular_rate: {angular_rates[-6:]}). "
+                       "Consider switching to strafe-based centering (velocity=30-60, direction=90/270, angular_rate=0) "
+                       "or using arm movement if target is close.")
+        
+        # Check 2: Ineffective same-direction strafing (velocity > 0, same direction, no rotation)
+        strafing = all(abs(v) > 1e-6 and abs(ar) < 1e-6 for ar, v, d in self.recent_base_steps)
+        if strafing and len(self.recent_base_steps) >= 6:
+            # Check if all recent steps are in the same direction (within 10 degrees)
+            if len(set(directions)) <= 2:  # Same or very similar direction
+                return ("⚠️ REFEREE HINT: Detected ineffective strafing pattern - "
+                       f"repeated {len(self.recent_base_steps)} base_step actions in same direction "
+                       f"(direction={directions[-1]:.0f}°, velocity={velocities[-1]:.0f} mm/s) without progress. "
+                       "If target is visible but not centering, try: "
+                       "1) Reverse direction (direction=270 if currently 90, or vice versa), "
+                       "2) Use arm movement to approach target directly, "
+                       "3) Adjust camera height (arm z) for better view.")
+        
+        return None
+    
+    def _detect_repeated_grasp_attempts(self) -> Optional[str]:
+        """
+        Detect repeated grasping attempts that may indicate failed grasps.
+        
+        Returns:
+            Hint string if repeated grasp pattern detected, None otherwise
+        """
+        if len(self.recent_grasp_attempts) < 6:
+            return None
+        
+        # Check for repeated grasp sequences with flexible pattern matching
+        # Pattern: (arm_move_xyz)* → gripper_open → (arm_move_xyz)* → gripper_close → arm_to_safe_pose
+        # This allows multiple arm movements before/after gripper_open
+        
+        pattern_count = 0
+        i = 0
+        while i < len(self.recent_grasp_attempts) - 2:
+            # Look for gripper_open
+            if self.recent_grasp_attempts[i] == 'gripper_open':
+                # After gripper_open, look for gripper_close (allowing arm_move_xyz in between)
+                j = i + 1
+                while j < len(self.recent_grasp_attempts) and self.recent_grasp_attempts[j] == 'arm_move_xyz':
+                    j += 1
+                
+                # Check if we have gripper_close followed by arm_to_safe_pose
+                if (j < len(self.recent_grasp_attempts) and
+                    self.recent_grasp_attempts[j] == 'gripper_close'):
+                    k = j + 1
+                    while k < len(self.recent_grasp_attempts) and self.recent_grasp_attempts[k] == 'arm_move_xyz':
+                        k += 1
+                    
+                    if (k < len(self.recent_grasp_attempts) and
+                        self.recent_grasp_attempts[k] == 'arm_to_safe_pose'):
+                        pattern_count += 1
+                        i = k + 1  # Skip past this pattern
+                        continue
+            i += 1
+        
+        # If we've seen the pattern 2+ times, it's likely failing
+        if pattern_count >= 2:
+            return (f"⚠️ REFEREE HINT: Detected {pattern_count} repeated grasp attempts "
+                   f"(gripper_open → gripper_close → arm_to_safe_pose sequence). "
+                   f"This suggests the grasp is failing. Consider: "
+                   f"1) Adjusting approach angle or position, "
+                   f"2) Verifying target is actually in gripper after close, "
+                   f"3) Trying a different grasping strategy (e.g., different z height, different approach), "
+                   f"4) If target keeps disappearing after grasp, it may have been successfully grasped - verify visually.")
+        
+        return None
+    
+    def _detect_prolonged_search(self) -> Optional[str]:
+        """
+        Detect prolonged search when target is not visible for many iterations.
+        
+        Returns:
+            Hint string if prolonged search detected, None otherwise
+        """
+        # Check if we've been searching for 10+ iterations without finding target
+        # This is a simple heuristic - if iteration > 10 and last few actions were base_step rotations
+        if self.iteration < 10:
+            return None
+        
+        # Check if recent actions are mostly base_step rotations (searching)
+        if len(self.recent_base_steps) >= 6:
+            rotation_only = all(abs(v) < 1e-6 and abs(ar) > 1e-6 for ar, v, d in self.recent_base_steps)
+            if rotation_only:
+                return ("⚠️ REFEREE HINT: Prolonged search detected - target not visible for many iterations. "
+                       "Consider: 1) Moving forward (base_step with velocity>0, direction=0) to explore new areas, "
+                       "2) Changing camera height (arm z) for different perspective, "
+                       "3) Target may have been moved or is outside current search area.")
+        
+        return None
     
     def act(self, action_plan: Dict[str, Any]) -> tuple[bool, Dict[str, Any], str]:
         """
@@ -139,30 +317,114 @@ class Executor:
         
         # Execute action via skills
         if action_name == "base_step":
+            velocity = params.get("velocity", 0.0)
+            angular_rate = params.get("angular_rate", 0.0)
+            direction = params.get("direction", 0.0)
+            
+            # Record base_step for oscillation and ineffective strafing detection
+            self.recent_base_steps.append((angular_rate, velocity, direction))
+            if len(self.recent_base_steps) > self.max_recent_steps:
+                self.recent_base_steps.pop(0)
+            
             return self.skills.base_step(
-                params.get("velocity", 0.0),
-                params.get("direction", 0.0),
-                params.get("angular_rate", 0.0),
+                velocity,
+                direction,
+                angular_rate,
                 params.get("duration", 0.3)
             )
         elif action_name == "base_stop":
             return self.skills.base_stop()
+        elif action_name == "task_complete":
+            # Special action: Gemini declared task completion
+            # Return success but don't execute any robot action
+            return (True, {
+                "action": "task_complete",
+                "message": "Task completion declared by Gemini"
+            }, "")
         elif action_name == "arm_move_xyz":
-            return self.skills.arm_move_xyz(
-                params.get("x", 0.0),
-                params.get("y", 6.0),
+            # Clear base_step history when switching to arm movement
+            self.recent_base_steps.clear()
+            
+            # Record requested coordinates before clamping
+            requested_x = params.get("x", 0.0)
+            requested_y = params.get("y", 6.0)
+            
+            # Execute arm movement
+            success, result, error = self.skills.arm_move_xyz(
+                requested_x,
+                requested_y,
                 params.get("z", 18.0),
                 params.get("pitch", 0.0),
                 params.get("roll", -90.0),
                 params.get("yaw", 90.0),
                 params.get("speed", 1500)
             )
+            
+            # Record arm movement for clamping detection
+            if success and result:
+                actual_x = result.get("x", requested_x)
+                actual_y = result.get("y", requested_y)
+                self.recent_arm_moves.append((requested_x, requested_y, actual_x, actual_y))
+                if len(self.recent_arm_moves) > self.max_recent_arm_moves:
+                    self.recent_arm_moves.pop(0)
+            
+            return success, result, error
         elif action_name == "arm_to_safe_pose":
+            # Clear base_step history when switching to arm movement
+            self.recent_base_steps.clear()
             return self.skills.arm_to_safe_pose()
         elif action_name == "gripper_open":
             return self.skills.gripper_open()
         elif action_name == "gripper_close":
-            return self.skills.gripper_close()
+            success, result, error = self.skills.gripper_close()
+            # If gripper close succeeded, schedule a post-grasp visual check
+            if success:
+                self.need_post_grasp_check = True
+            # Record action for grasp pattern detection
+            self.recent_grasp_attempts.append(action_name)
+            if len(self.recent_grasp_attempts) > self.max_grasp_attempts:
+                self.recent_grasp_attempts.pop(0)
+            return success, result, error
+        elif action_name in ["arm_move_xyz", "gripper_open", "arm_to_safe_pose"]:
+            # Record action for grasp pattern detection
+            self.recent_grasp_attempts.append(action_name)
+            if len(self.recent_grasp_attempts) > self.max_grasp_attempts:
+                self.recent_grasp_attempts.pop(0)
+            # Continue with existing logic for these actions
+            if action_name == "arm_move_xyz":
+                # Clear base_step history when switching to arm movement
+                self.recent_base_steps.clear()
+                
+                # Record requested coordinates before clamping
+                requested_x = params.get("x", 0.0)
+                requested_y = params.get("y", 6.0)
+                
+                # Execute arm movement
+                success, result, error = self.skills.arm_move_xyz(
+                    requested_x,
+                    requested_y,
+                    params.get("z", 18.0),
+                    params.get("pitch", 0.0),
+                    params.get("roll", -90.0),
+                    params.get("yaw", 90.0),
+                    params.get("speed", 1500)
+                )
+                
+                # Record arm movement for clamping detection
+                if success and result:
+                    actual_x = result.get("x", requested_x)
+                    actual_y = result.get("y", requested_y)
+                    self.recent_arm_moves.append((requested_x, requested_y, actual_x, actual_y))
+                    if len(self.recent_arm_moves) > self.max_recent_arm_moves:
+                        self.recent_arm_moves.pop(0)
+                
+                return success, result, error
+            elif action_name == "arm_to_safe_pose":
+                # Clear base_step history when switching to arm movement
+                self.recent_base_steps.clear()
+                return self.skills.arm_to_safe_pose()
+            elif action_name == "gripper_open":
+                return self.skills.gripper_open()
         else:
             return (False, {}, f"Unknown action: {action_name}")
     
@@ -210,6 +472,10 @@ class Executor:
             if result:
                 print(f"  → RPC result: {result}")
             # Continue anyway - arm might already be in a safe position
+        
+        # Track consecutive base_stop actions (may indicate task completion)
+        consecutive_base_stop = 0
+        max_consecutive_base_stop = 3  # If 3+ consecutive base_stop with completion keywords, stop
         
         try:
             while self.iteration < max_iterations:
@@ -270,8 +536,19 @@ class Executor:
                         # If detection fails, continue with planning
                         print(f"Warning: Task completion check failed: {e}")
                 
-                # Plan (using gemini-robotics-er-1.5-preview)
-                action_plan = self.plan(image, detection)
+                # If post-grasp visual verification is pending, force a check action
+                if self.need_post_grasp_check:
+                    action_plan = {
+                        "action": "arm_to_safe_pose",
+                        "params": {},
+                        "phase": "VERIFY",
+                        "why": "Post-grasp visual check: bring gripper into view to verify object is held"
+                    }
+                    # Clear flag after scheduling the forced action
+                    self.need_post_grasp_check = False
+                else:
+                    # Plan (using gemini-robotics-er-1.5-preview)
+                    action_plan = self.plan(image, detection)
                 
                 # Print action with full thinking process
                 action_name = action_plan.get('action', 'unknown')
@@ -290,6 +567,27 @@ class Executor:
                 act_success, action_result, error = self.act(action_plan)
                 self.last_action = action_plan
                 self.last_action_result = action_result
+                
+                # Check for task completion
+                if action_plan.get("action") == "task_complete":
+                    print("\n✓ Task completion declared by Gemini")
+                    print(f"Reason: {action_plan.get('why', 'N/A')[:200]}")
+                    break
+                
+                # Track consecutive base_stop actions (may indicate completion)
+                if action_plan.get("action") == "base_stop":
+                    why = action_plan.get("why", "").lower()
+                    completion_keywords = ["complete", "successfully", "finished", "accomplished", "task"]
+                    if any(kw in why for kw in completion_keywords):
+                        consecutive_base_stop += 1
+                        if consecutive_base_stop >= max_consecutive_base_stop:
+                            print(f"\n✓ Detected {consecutive_base_stop} consecutive base_stop actions with completion keywords")
+                            print("Stopping execution - task may be complete")
+                            break
+                    else:
+                        consecutive_base_stop = 0  # Reset if no completion keywords
+                else:
+                    consecutive_base_stop = 0  # Reset if not base_stop
                 
                 if not act_success:
                     print(f"Action failed: {error}")

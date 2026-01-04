@@ -413,17 +413,8 @@ class GeminiPolicy:
                 
                 return action_plan
             
-            # No function call found (neither actual nor parsed from text), return safe action
-            action_plan = {
-                "action": "base_stop",  # Safe fallback action
-                "params": {},
-                "phase": state_summary.get("phase", "unknown"),
-                "why": f"Gemini response: {response_text[:200] if response_text else 'No response'}",
-                "thinking_process": response_text  # Full thinking process for debugging
-            }
-            
-            # Try to parse function call from text if no actual function_call was returned
-            # Sometimes Gemini describes the function call in text instead of using function calling
+            # No function call found (neither actual nor parsed from text)
+            # First, try to parse function call from text
             parsed_action = None
             parsed_params = {}
             
@@ -461,7 +452,57 @@ class GeminiPolicy:
                 
                 return action_plan
             
-            # No function call found (neither actual nor parsed from text), return safe action
+            # No function call found - check if Gemini declared task completion
+            # Check both response_text and thinking_process for completion keywords
+            completion_text = response_text or ""
+            # Also check thinking_process if available in response_log
+            if response_log.get("thinking_process"):
+                completion_text += " " + response_log["thinking_process"]
+            
+            if completion_text:
+                completion_keywords = [
+                    "task is complete", "task complete", "successfully completed",
+                    "successfully grasped", "task \"", "mission accomplished",
+                    "completed the task", "finished the task", "task has been completed",
+                    "successfully picked up", "successfully grabbed"
+                ]
+                completion_lower = completion_text.lower()
+                if any(keyword in completion_lower for keyword in completion_keywords):
+                    # Gemini declared completion - return special action to signal completion
+                    print(f"✓ Gemini declared task completion: {completion_text[:100]}...")
+                    action_plan = {
+                        "action": "task_complete",  # Special action to signal completion
+                        "params": {},
+                        "phase": "COMPLETE",
+                        "why": response_text or completion_text,
+                        "thinking_process": response_text or completion_text
+                    }
+                    
+                    # Update response log
+                    response_log["task_complete"] = True
+                    self._log_response(response_log, state_summary.get("iteration", 0))
+                    
+                    # Update conversation history
+                    self._update_conversation_history(
+                        user_message=user_message,
+                        image=image,
+                        response_text=response_text,
+                        function_call=None,
+                        action_plan=action_plan,
+                        action_result=last_action_result
+                    )
+                    
+                    return action_plan
+            
+            # No function call and no completion declaration - return safe fallback action
+            action_plan = {
+                "action": "base_stop",  # Safe fallback action
+                "params": {},
+                "phase": state_summary.get("phase", "unknown"),
+                "why": f"Gemini response: {response_text[:200] if response_text else 'No response'}",
+                "thinking_process": response_text  # Full thinking process for debugging
+            }
+            
             # Update conversation history with current interaction
             self._update_conversation_history(
                 user_message=user_message,
@@ -786,21 +827,21 @@ class GeminiPolicy:
                 for part in parts:
                     if hasattr(part, 'text') and part.text:
                         text = part.text
-                        # Extract ONLY iteration and action name (not full result dict to save tokens)
+                        # Prefer function-call lines (they include params like angular_rate/duration)
+                        # This makes oscillation patterns obvious to the model.
+                        if "Function call:" in text:
+                            for line in text.split("\n"):
+                                line = line.strip()
+                                if line.startswith("Function call:"):
+                                    history_lines.append(f"  {line}")
+                            continue
+
+                        # Otherwise, extract just iteration markers from user state summaries.
                         if "Iteration:" in text:
-                            lines = text.split('\n')
-                            for line in lines:
-                                # Only extract iteration number and action name (skip full result dicts)
-                                if "Iteration:" in line:
-                                    # Extract just the iteration number
-                                    history_lines.append(f"  {line.strip()}")
-                                elif "Last action:" in line and "Last action result:" not in line:
-                                    # Extract just the action name, not the full result
-                                    action_line = line.strip()
-                                    # Remove "Last action result:" if present
-                                    if "Last action result:" in action_line:
-                                        continue
-                                    history_lines.append(f"  {action_line}")
+                            for line in text.split("\n"):
+                                line = line.strip()
+                                if line.startswith("Iteration:"):
+                                    history_lines.append(f"  {line}")
         
         if len(history_lines) == 1:
             return ""  # No useful history extracted
@@ -860,10 +901,15 @@ class GeminiPolicy:
             model_parts.append(types.Part.from_text(text=response_text))
         if function_call:
             # Add function call as text description for history
+            # Include parameters so model can detect oscillation patterns (e.g., angular_rate alternating)
             func_text = f"Function call: {function_call.name}("
             if hasattr(function_call, 'args') and function_call.args:
                 if isinstance(function_call.args, dict):
-                    params_str = ", ".join([f"{k}={v}" for k, v in function_call.args.items()])
+                    # Sort params for consistent display - this helps model see patterns
+                    params_list = []
+                    for k, v in sorted(function_call.args.items()):
+                        params_list.append(f"{k}={v}")
+                    params_str = ", ".join(params_list)
                 else:
                     params_str = str(function_call.args)
                 func_text += params_str
