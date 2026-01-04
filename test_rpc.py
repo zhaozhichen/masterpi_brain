@@ -320,6 +320,9 @@ def test_level1_functions(ip_address: str, port: int, timeout: int = 10) -> Dict
     TEST_SPEED = 50  # 使用整数，范围 -100 到 100
     # Level 1 functions organized by category
     level1_functions_by_category = {
+        "停止运动": [
+            ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
+        ],
         "传感器读取": [
             ("GetBatteryVoltage", []),
         ],
@@ -327,58 +330,58 @@ def test_level1_functions(ip_address: str, port: int, timeout: int = 10) -> Dict
             ("SetGripperOpen", []),
             ("SetGripperClose", []),
         ],
-        # "机械臂高级操作": [
-        #     # ArmMoveIk(x, y, z, pitch, roll, yaw, speed)
-        #     # Initial position
-        #     ("ArmMoveIk", [0.0, 5.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     # X range
-        #     ("ArmMoveIk", [-15.0, 0.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     ("ArmMoveIk", [-10.0, 0.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     ("ArmMoveIk", [-5.0, 0.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     ("ArmMoveIk", [0.0, 0.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     ("ArmMoveIk", [5.0, 0.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     ("ArmMoveIk", [10.0, 0.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     ("ArmMoveIk", [15.0, 0.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     # Y range
-        #     ("ArmMoveIk", [0.0, 0.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     ("ArmMoveIk", [0.0, 5.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     ("ArmMoveIk", [0.0, 10.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     ("ArmMoveIk", [0.0, 15.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     ("ArmMoveIk", [0.0, 20.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     # Z range
-        #     ("ArmMoveIk", [0.0, 10.0, -5.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     ("ArmMoveIk", [0.0, 10.0, 0.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     ("ArmMoveIk", [0.0, 10.0, 5.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     ("ArmMoveIk", [0.0, 10.0, 10.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     ("ArmMoveIk", [0.0, 10.0, 15.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     ("ArmMoveIk", [0.0, 10.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     ("ArmMoveIk", [0.0, 10.0, 25.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
-        #     # StopBusServo 需要字符串参数 "stopAction"
-        #     ("StopBusServo", ["stopAction"]),
-        # ],
-        "Mecanum底盘高级操作": [
-            # SetMecanumVelocity(velocity, direction, angular_rate)
-            # 根据文档：velocity(0-200 mm/s建议), direction(0-360度), angular_rate(度/秒,建议不超过50)
-            ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
-            ("SetMecanumVelocity", [TEST_SPEED, 0.0, 0.0], {"note": "Forward movement"}),
-            ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
-            ("SetMecanumVelocity", [TEST_SPEED, 45.0, 0.0], {"note": "Right-forward movement"}),
-            ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
-            ("SetMecanumVelocity", [-1*TEST_SPEED, 90.0, 0.0], {"note": "Left movement"}),
-            ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
-            ("SetMecanumVelocity", [TEST_SPEED, 180.0, 0.0], {"note": "Backward movement"}),
-            ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
-            ("SetMecanumVelocity", [0.0, 0.0, 30.0], {"note": "Rotate in place"}),
-            ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
-            ("SetMecanumVelocity", [TEST_SPEED, 0.0, 20.0], {"note": "Move forward with rotation"}),
-            ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
-            ("SetMecanumVelocity", [1.5*TEST_SPEED, 0.0, 0.0], {"note": "High speed movement"}),
-            ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
-            ("SetMecanumVelocity", [0.2*TEST_SPEED, 0.0, 0.0], {"note": "Slow speed movement"}),
-            ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
-            ("SetMecanumVelocity", [TEST_SPEED, 270.0, 0.0], {"note": "Right movement"}),
-            ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Final stop"}),
+        "机械臂高级操作": [
+            # ArmMoveIk(x, y, z, pitch, roll, yaw, speed)
+            # Initial position
+            ("ArmMoveIk", [0.0, 5.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            # X range
+            ("ArmMoveIk", [-15.0, 0.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            ("ArmMoveIk", [-10.0, 0.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            ("ArmMoveIk", [-5.0, 0.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            ("ArmMoveIk", [0.0, 0.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            ("ArmMoveIk", [5.0, 0.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            ("ArmMoveIk", [10.0, 0.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            ("ArmMoveIk", [15.0, 0.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            # Y range
+            ("ArmMoveIk", [0.0, 0.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            ("ArmMoveIk", [0.0, 5.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            ("ArmMoveIk", [0.0, 10.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            ("ArmMoveIk", [0.0, 15.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            ("ArmMoveIk", [0.0, 20.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            # Z range
+            ("ArmMoveIk", [0.0, 10.0, -5.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            ("ArmMoveIk", [0.0, 10.0, 0.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            ("ArmMoveIk", [0.0, 10.0, 5.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            ("ArmMoveIk", [0.0, 10.0, 10.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            ("ArmMoveIk", [0.0, 10.0, 15.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            ("ArmMoveIk", [0.0, 10.0, 20.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            ("ArmMoveIk", [0.0, 10.0, 25.0, 0.0, -90.0, 90.0, 1500], {"optional": True, "note": "Initial position"}),
+            # StopBusServo 需要字符串参数 "stopAction"
+            ("StopBusServo", ["stopAction"]),
         ],
+        # "Mecanum底盘高级操作": [
+        #     # SetMecanumVelocity(velocity, direction, angular_rate)
+        #     # 根据文档：velocity(0-200 mm/s建议), direction(0-360度), angular_rate(度/秒,建议不超过50)
+        #     ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
+        #     ("SetMecanumVelocity", [TEST_SPEED, 0.0, 0.0], {"note": "Forward movement"}),
+        #     ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
+        #     ("SetMecanumVelocity", [TEST_SPEED, 45.0, 0.0], {"note": "Right-forward movement"}),
+        #     ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
+        #     ("SetMecanumVelocity", [-1*TEST_SPEED, 90.0, 0.0], {"note": "Left movement"}),
+        #     ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
+        #     ("SetMecanumVelocity", [TEST_SPEED, 180.0, 0.0], {"note": "Backward movement"}),
+        #     ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
+        #     ("SetMecanumVelocity", [0.0, 0.0, 30.0], {"note": "Rotate in place"}),
+        #     ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
+        #     ("SetMecanumVelocity", [TEST_SPEED, 0.0, 20.0], {"note": "Move forward with rotation"}),
+        #     ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
+        #     ("SetMecanumVelocity", [1.5*TEST_SPEED, 0.0, 0.0], {"note": "High speed movement"}),
+        #     ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
+        #     ("SetMecanumVelocity", [0.2*TEST_SPEED, 0.0, 0.0], {"note": "Slow speed movement"}),
+        #     ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Stop movement"}),
+        #     ("SetMecanumVelocity", [TEST_SPEED, 270.0, 0.0], {"note": "Right movement"}),
+        #     ("SetMecanumVelocity", [0.0, 0.0, 0.0], {"note": "Final stop"}),
+        # ],
         # "电机底层控制（轮子测试）": [
         #     # SetBrushMotor(motor_id, speed, ...)
         #     # 根据文档：motor_id范围1-4（对应4个轮子），speed范围-100到100

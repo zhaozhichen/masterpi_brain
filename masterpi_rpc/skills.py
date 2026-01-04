@@ -121,6 +121,15 @@ class RobotSkills:
         
         elapsed = time.time() - self.timeout.start_time if self.timeout.start_time else 0.0
         
+        # Debug: Print RPC result to help diagnose issues
+        if result:
+            print(f"  → RPC returned: success={success}, result type={type(result)}")
+            if isinstance(result, list) and len(result) >= 2:
+                # RPC returns [True, [servo_angles, ...], 'ArmMoveIk']
+                ik_success = result[0] if len(result) > 0 else False
+                servo_data = result[1] if len(result) > 1 else None
+                print(f"  → IK success: {ik_success}, servo data: {servo_data}")
+        
         if success:
             return (True, {
                 "action": "arm_move_xyz",
@@ -145,21 +154,40 @@ class RobotSkills:
         """
         Move arm to safe pre-grasp position.
         
-        Default safe pose: (0, 6, 18, 0, -90, 90, 1500)
+        Safe pose: (0, 5, 20, 0, -90, 90, 1500)
         This is a conservative position above the workspace.
         
         Returns:
             (success: bool, result: dict, error: str)
         """
-        return self.arm_move_xyz(
+        # Execute arm movement
+        success, result, error = self.arm_move_xyz(
             x=0.0,
-            y=6.0,
-            z=18.0,
+            y=5.0,
+            z=20.0,
             pitch=0.0,
             roll=-90.0,
             yaw=90.0,
             speed=1500
         )
+        
+        if not success:
+            return (False, result, error)
+        
+        # Wait for arm movement to complete
+        # Speed 1500ms means it takes 1.5 seconds per unit of movement
+        # Estimate max movement distance and add safety margin
+        # Typical arm movement: ~20cm max distance, at 1500ms speed ≈ 2-3 seconds
+        # Add extra margin for safety
+        wait_time = 3.0  # seconds
+        print(f"  → Waiting {wait_time:.1f}s for arm movement to complete...")
+        time.sleep(wait_time)
+        print(f"  → Wait complete")
+        
+        return (True, {
+            **result,
+            "wait_time": wait_time
+        }, "")
     
     def gripper_open(self) -> Tuple[bool, Dict[str, Any], str]:
         """

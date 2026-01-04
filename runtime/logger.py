@@ -78,6 +78,10 @@ class Logger:
             "llm_output": llm_output
         }
         
+        # Extract thinking process from action_plan if available
+        if action_plan and "thinking_process" in action_plan:
+            iteration_data["thinking_process"] = action_plan["thinking_process"]
+        
         # Save image
         if image is not None:
             image_path = self.session_dir / "images" / f"iter_{self.iteration:05d}.jpg"

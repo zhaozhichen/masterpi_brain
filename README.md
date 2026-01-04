@@ -1,6 +1,6 @@
 # MasterPi Robotics Control System
 
-A stepwise closed-loop robot control system for MasterPi that executes complex tasks using discrete small steps with visual feedback. The system supports both deterministic FSM-based planning and Gemini Robotics-ER 1.5 for high-level planning.
+A stepwise closed-loop robot control system for MasterPi that executes complex tasks using discrete small steps with visual feedback. The system uses Gemini Robotics-ER 1.5 for high-level planning and Gemini 3 Flash Preview for fast task completion detection.
 
 ## Features
 
@@ -9,7 +9,7 @@ A stepwise closed-loop robot control system for MasterPi that executes complex t
 - **Safety First**: All parameters clamped, timeouts enforced, emergency stop available
 - **Fail-Safe Recovery**: Multiple retry strategies, backtrack on failure
 - **Comprehensive Logging**: Every step logged for debugging and improvement
-- **Dual Policy Support**: FSM (deterministic) and Gemini (LLM-based) planning
+- **LLM-Based Planning**: Uses Gemini Robotics-ER 1.5 for high-level planning and Gemini 3 Flash Preview for fast task completion detection
 
 ## Architecture
 
@@ -19,7 +19,8 @@ A stepwise closed-loop robot control system for MasterPi that executes complex t
 └──────┬──────┘
        │
        ├─── Perception Layer (Camera + Detection)
-       ├─── Planning Layer (FSM or Gemini)
+       ├─── Planning Layer (Gemini Robotics-ER 1.5)
+       ├─── Task Detection (Gemini 3 Flash Preview)
        ├─── Skills Layer (Short-step wrappers)
        └─── RPC Client (MasterPi interface)
 ```
@@ -53,7 +54,7 @@ Or manually edit `.env` file:
 
 ## Usage
 
-### Basic Usage (FSM Policy)
+### Basic Usage
 
 ```bash
 python runtime/main.py --task "pick up red block"
@@ -65,12 +66,9 @@ python runtime/main.py --task "pick up red block"
 python runtime/main.py --task "pick up red block" --ip 192.168.1.100
 ```
 
-### Using Gemini Policy
+### Setup
 
-```bash
-export GEMINI_API_KEY=your_api_key
-python runtime/main.py --task "pick up red block" --policy gemini
-```
+Make sure you have `GEMINI_API_KEY` set in your `.env` file (see Configuration section).
 
 ### Command Line Options
 
@@ -79,7 +77,6 @@ python runtime/main.py --task "pick up red block" --policy gemini
 --ip TEXT                Robot IP address (default: 192.168.86.60)
 --rpc-port INTEGER       RPC server port (default: 9030)
 --camera-port INTEGER    Camera stream port (default: 8080)
---policy [fsm|gemini]    Planning policy (default: fsm)
 --thresholds TEXT        Path to thresholds config (default: config/thresholds.yaml)
 --max-iterations INTEGER Maximum iterations (default: 500)
 ```
@@ -110,7 +107,7 @@ masterpi_brain/
 ├── config/              Configuration files
 ├── masterpi_rpc/        RPC client and skills
 ├── perception/          Camera and detection
-├── planner/              Planning policies (FSM, Gemini)
+├── planner/              Planning policy (Gemini)
 ├── runtime/             Executor, logger, main entry
 └── logs/                Execution logs (auto-generated)
 ```
@@ -119,9 +116,8 @@ masterpi_brain/
 
 1. **Phase 1**: RPC Client and Skills Layer ✅
 2. **Phase 2**: Perception Layer ✅
-3. **Phase 3**: FSM Policy (MVP) ✅
-4. **Phase 4**: Executor and Logging ✅
-5. **Phase 5**: Gemini Robotics-ER Integration ✅
+3. **Phase 3**: Executor and Logging ✅
+4. **Phase 4**: Gemini 3 Flash Integration ✅
 
 ## Logging
 
@@ -143,17 +139,16 @@ logs/YYYYMMDD_HHMMSS_task_name/
 
 ## Notes
 
-- All MasterPi interfaces are based strictly on `RPCServer_功能列表.md`
+- All MasterPi interfaces are based strictly on `RPCServer_methods.md`
 - Only Level 1 (high-level) RPC functions are used
 - The system is designed for low-cost, high-error platforms
 - Visual servoing compensates for lack of precise distance measurement
-- The FSM policy should be tested first before using Gemini policy
 
 ## Troubleshooting
 
 1. **Camera connection fails**: Check robot IP and camera port (default 8080)
 2. **RPC calls fail**: Verify RPC server is running on port 9030
-3. **Detection not working**: Adjust HSV ranges in `detect_red.py` or lighting
+3. **General Purpose Design**: The system uses Gemini's visual understanding for object detection - no hardcoded color detection or task-specific logic.
 4. **Gemini API errors**: Verify `GEMINI_API_KEY` is set correctly
 
 ## License

@@ -32,8 +32,8 @@ robot_card:
       workspace_notes: "X: -10 to 10 cm, Y: 5 to 15 cm, Z: 0 to 25 cm (recommended ranges)"
       safe_pose:
         x: 0.0
-        y: 6.0
-        z: 18.0
+        y: 5.0
+        z: 20.0
         pitch: 0.0
         roll: -90.0
         yaw: 90.0

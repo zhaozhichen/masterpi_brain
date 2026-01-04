@@ -27,14 +27,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run with FSM policy (default)
+  # Basic usage
   python runtime/main.py --task "pick up red block"
   
   # Specify robot IP
   python runtime/main.py --task "pick up red block" --ip 192.168.1.100
   
-  # Use Gemini policy (requires API key)
-  python runtime/main.py --task "pick up red block" --policy gemini
+  # Different task
+  python runtime/main.py --task "move the blue cup to the table"
         """
     )
     
@@ -67,14 +67,6 @@ Examples:
     )
     
     parser.add_argument(
-        "--policy",
-        type=str,
-        choices=["fsm", "gemini"],
-        default="fsm",
-        help="Planning policy: 'fsm' (deterministic) or 'gemini' (LLM-based) (default: fsm)"
-    )
-    
-    parser.add_argument(
         "--thresholds",
         type=str,
         default="config/thresholds.yaml",
@@ -90,13 +82,12 @@ Examples:
     
     args = parser.parse_args()
     
-    # Check for Gemini API key if using Gemini policy
-    if args.policy == "gemini":
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            print("Error: GEMINI_API_KEY environment variable not set")
-            print("Please set it with: export GEMINI_API_KEY=your_api_key")
-            sys.exit(1)
+    # Check for Gemini API key (required)
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        print("Error: GEMINI_API_KEY environment variable not set")
+        print("Please set it in .env file or with: export GEMINI_API_KEY=your_api_key")
+        sys.exit(1)
     
     # Create and run executor
     try:
@@ -104,7 +95,6 @@ Examples:
             robot_ip=args.ip,
             rpc_port=args.rpc_port,
             camera_port=args.camera_port,
-            policy_type=args.policy,
             thresholds_path=args.thresholds
         )
         

@@ -90,7 +90,22 @@ class RPCClient:
         except requests.exceptions.Timeout:
             return (False, None, f"Request timeout after {self.timeout}s")
         except requests.exceptions.ConnectionError as e:
-            return (False, None, f"Connection error: {e}")
+            error_str = str(e)
+            # Provide helpful diagnostic information
+            if "No route to host" in error_str or "113" in error_str:
+                diagnostic = (
+                    f"Cannot connect to robot at {self.ip_address}:{self.port}. "
+                    f"Possible causes:\n"
+                    f"  1. Robot is not powered on\n"
+                    f"  2. Robot is not on the same network\n"
+                    f"  3. IP address is incorrect (current: {self.ip_address})\n"
+                    f"  4. RPC server is not running on port {self.port}\n"
+                    f"  5. Firewall blocking the connection\n"
+                    f"  → Try: ping {self.ip_address} to check network connectivity"
+                )
+                return (False, None, diagnostic)
+            else:
+                return (False, None, f"Connection error: {e}")
         except Exception as e:
             return (False, None, f"Unexpected error: {e}")
     

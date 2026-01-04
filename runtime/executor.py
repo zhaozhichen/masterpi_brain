@@ -13,8 +13,7 @@ from dotenv import load_dotenv
 from masterpi_rpc.rpc_client import RPCClient
 from masterpi_rpc.skills import RobotSkills
 from perception.camera import Camera
-from perception.detect_red import RedBlockDetector
-from planner.fsm_policy import FSMPolicy, Phase
+from perception.task_detector import TaskDetector
 from planner.gemini_policy import GeminiPolicy
 from runtime.logger import Logger
 
@@ -29,7 +28,6 @@ class Executor:
                  robot_ip: str = None,
                  rpc_port: int = None,
                  camera_port: int = None,
-                 policy_type: str = "fsm",
                  thresholds_path: str = "config/thresholds.yaml"):
         """
         Initialize executor.
@@ -38,7 +36,6 @@ class Executor:
             robot_ip: Robot IP address (default: from .env ROBOT_IP)
             rpc_port: RPC server port (default: from .env RPC_PORT)
             camera_port: Camera stream port (default: from .env CAMERA_PORT)
-            policy_type: Policy type ("fsm" or "gemini")
             thresholds_path: Path to thresholds config
         """
         # Get defaults from environment variables
@@ -55,19 +52,15 @@ class Executor:
         self.rpc_client = RPCClient(robot_ip, rpc_port)
         self.skills = RobotSkills(self.rpc_client)
         self.camera = Camera(robot_ip, camera_port)
-        self.detector = RedBlockDetector()
+        # Task completion detector (uses gemini-3-flash-preview)
+        self.task_detector = TaskDetector()
         
         # Load thresholds
         with open(thresholds_path, 'r') as f:
             self.thresholds = yaml.safe_load(f)['thresholds']
         
-        # Initialize policy
-        if policy_type == "fsm":
-            self.policy = FSMPolicy(thresholds_path)
-        elif policy_type == "gemini":
-            self.policy = GeminiPolicy(thresholds_path)
-        else:
-            raise ValueError(f"Unknown policy type: {policy_type}")
+        # Initialize Gemini policy
+        self.policy = GeminiPolicy(thresholds_path)
         
         # Logger
         self.logger = Logger()
@@ -76,8 +69,6 @@ class Executor:
         self.iteration = 0
         self.last_action = None
         self.last_action_result = None
-        self.stuck_counter = 0
-        self.last_action_name = None
         self.current_task = None  # Will be set in run()
     
     def observe(self) -> tuple[bool, Optional[Any], Dict[str, Any]]:
@@ -99,13 +90,15 @@ class Executor:
                 "error": "Failed to capture frame"
             })
         
-        # Detect target
-        detection = self.detector.detect(image)
-        
-        # Set image size in policy if needed (only for FSM policy)
-        if image is not None and isinstance(self.policy, FSMPolicy):
-            h, w = image.shape[:2]
-            self.policy.set_image_size(w, h)
+        # No local detection needed - Gemini will use visual understanding
+        detection = {
+            "found": False,  # Unknown - let Gemini decide
+            "bbox": None,
+            "center": None,
+            "area_ratio": 0.0,
+            "confidence": 0.0,
+            "note": "No local detection - using Gemini visual understanding"
+        }
         
         return (True, image, detection)
     
@@ -120,20 +113,16 @@ class Executor:
         Returns:
             Action plan dict with "action", "params", "phase", "why"
         """
-        if isinstance(self.policy, GeminiPolicy):
-            # Gemini policy needs image and state summary
-            state_summary = {
-                "task": self.current_task,
-                "phase": "unknown",
-                "iteration": self.iteration,
-                "detection": detection,
-                "last_action": self.last_action.get("action") if self.last_action else None,
-                "last_action_success": self.last_action_result is not None and self.last_action_result.get("success", False) if self.last_action_result else None
-            }
-            return self.policy.plan(image, detection, state_summary, self.last_action_result)
-        else:
-            # FSM policy
-            return self.policy.plan(detection, self.last_action_result)
+        # Build state summary for Gemini
+        state_summary = {
+            "task": self.current_task,
+            "phase": "unknown",
+            "iteration": self.iteration,
+            "detection": detection,  # Included for logging, but Gemini ignores it
+            "last_action": self.last_action.get("action") if self.last_action else None,
+            "last_action_success": self.last_action_result is not None and self.last_action_result.get("success", False) if self.last_action_result else None
+        }
+        return self.policy.plan(image, detection, state_summary, self.last_action_result)
     
     def act(self, action_plan: Dict[str, Any]) -> tuple[bool, Dict[str, Any], str]:
         """
@@ -147,19 +136,6 @@ class Executor:
         """
         action_name = action_plan.get("action")
         params = action_plan.get("params", {})
-        
-        # Check for stuck condition (same action repeated)
-        if action_name == self.last_action_name:
-            self.stuck_counter += 1
-            if self.stuck_counter >= self.thresholds['general']['stuck_threshold']:
-                # Force recovery (only for FSM policy)
-                if isinstance(self.policy, FSMPolicy):
-                    self.policy.phase = Phase.RECOVER
-                return (False, {}, "Stuck: same action repeated too many times")
-        else:
-            self.stuck_counter = 0
-        
-        self.last_action_name = action_name
         
         # Execute action via skills
         if action_name == "base_step":
@@ -207,14 +183,33 @@ class Executor:
         # Start logging session
         self.logger.start_session(task)
         
-        # Set log directory for Gemini policy
-        if isinstance(self.policy, GeminiPolicy):
-            session_dir = self.logger.get_session_dir()
-            if session_dir:
-                self.policy.set_log_dir(session_dir)
-        
         # Reset policy
         self.policy.reset()
+        
+        # Set log directory for Gemini policy (after reset to avoid being cleared)
+        session_dir = self.logger.get_session_dir()
+        if session_dir:
+            self.policy.set_log_dir(session_dir)
+        
+        # Reset arm to safe pose before starting new task
+        print("Resetting arm to safe pose...")
+        print(f"  → Target position: x=0.0, y=5.0, z=20.0, pitch=0.0, roll=-90.0, yaw=90.0, speed=1500")
+        success, result, error = self.skills.arm_to_safe_pose()
+        if success:
+            print(f"✓ Arm reset command sent successfully")
+            if result:
+                if "ik_success" in result:
+                    print(f"  → IK calculation: {'success' if result['ik_success'] else 'failed'}")
+                if "wait_time" in result:
+                    print(f"  → Waited {result['wait_time']:.1f}s for movement to complete")
+                # Show actual parameters used (after clamping)
+                if "x" in result and "y" in result and "z" in result:
+                    print(f"  → Actual position: x={result['x']}, y={result['y']}, z={result['z']}")
+        else:
+            print(f"⚠️  Warning: Arm reset failed: {error}")
+            if result:
+                print(f"  → RPC result: {result}")
+            # Continue anyway - arm might already be in a safe position
         
         try:
             while self.iteration < max_iterations:
@@ -224,26 +219,72 @@ class Executor:
                 # Observe
                 obs_success, image, detection = self.observe()
                 if not obs_success:
-                    print("Warning: Observation failed")
+                    error_msg = detection.get("error", "Unknown error")
+                    print(f"Warning: Observation failed - {error_msg}")
+                    # Use latest cached frame if available
+                    if self.camera.latest_frame is not None:
+                        print("  → Using cached frame from previous observation")
+                        image = self.camera.latest_frame.copy()
+                        obs_success = True
+                        # Update detection to indicate we're using cached frame
+                        detection["using_cached_frame"] = True
+                    else:
+                        # If no cached frame, try to get one more time with fresh connection
+                        print("  → No cached frame, retrying with fresh connection...")
+                        try:
+                            retry_success, retry_image, _ = self.camera.get_frame()
+                            if retry_success and retry_image is not None:
+                                print("  → Retry successful, using fresh frame")
+                                image = retry_image
+                                obs_success = True
+                            else:
+                                print("  → Retry also failed, will log without image")
+                        except Exception as e:
+                            print(f"  → Retry exception: {e}, will log without image")
                 
-                # Get phase string (handle both FSM Phase enum and Gemini string)
-                phase_str = self.policy.phase.value if hasattr(self.policy.phase, 'value') else str(self.policy.phase)
+                # Get phase string
+                phase_str = str(self.policy.phase)
                 print(f"Detection: found={detection.get('found')}, "
                       f"area_ratio={detection.get('area_ratio', 0):.4f}, "
                       f"phase={phase_str}")
                 
-                # Check if done (only for FSM policy)
-                if isinstance(self.policy, FSMPolicy):
-                    if self.policy.phase == Phase.DONE:
-                        print("Task completed!")
-                        break
-                    elif self.policy.phase == Phase.FAILED:
-                        print("Task failed!")
-                        break
+                # Check task completion using fast detector (gemini-3-flash-preview)
+                # This happens BEFORE planning to avoid unnecessary planning if task is done
+                if image is not None:
+                    try:
+                        completion_check = self.task_detector.check_completion(
+                            image=image,
+                            task_description=task,
+                            last_action=self.last_action.get("action") if self.last_action else None
+                        )
+                        
+                        if completion_check.get("completed", False):
+                            confidence = completion_check.get("confidence", 0.0)
+                            reason = completion_check.get("reason", "")
+                            evidence = completion_check.get("evidence", "")
+                            print(f"\n✓ Task completed! (confidence: {confidence:.2f})")
+                            print(f"  Reason: {reason}")
+                            print(f"  Evidence: {evidence}")
+                            break
+                    except Exception as e:
+                        # If detection fails, continue with planning
+                        print(f"Warning: Task completion check failed: {e}")
                 
-                # Plan
+                # Plan (using gemini-robotics-er-1.5-preview)
                 action_plan = self.plan(image, detection)
-                print(f"Action: {action_plan.get('action')} - {action_plan.get('why')}")
+                
+                # Print action with full thinking process
+                action_name = action_plan.get('action', 'unknown')
+                thinking_process = action_plan.get('thinking_process') or action_plan.get('why', '')
+                
+                print(f"Action: {action_name}")
+                if thinking_process:
+                    # Print thinking process in a readable format
+                    print(f"Thinking: {thinking_process}")
+                else:
+                    why = action_plan.get('why', '')
+                    if why:
+                        print(f"Why: {why}")
                 
                 # Act
                 act_success, action_result, error = self.act(action_plan)
@@ -252,10 +293,18 @@ class Executor:
                 
                 if not act_success:
                     print(f"Action failed: {error}")
+                    # If it's a connection error, provide additional help
+                    if "Cannot connect to robot" in error or "No route to host" in error:
+                        print("\n⚠️  Robot connection issue detected!")
+                        print("   Please check:")
+                        print(f"   1. Robot is powered on and connected to network")
+                        print(f"   2. Robot IP is correct: {self.rpc_client.ip_address}")
+                        print(f"   3. RPC server is running on port {self.rpc_client.port}")
+                        print(f"   4. Network connectivity: try 'ping {self.rpc_client.ip_address}'")
+                        print("   The system will continue trying, but actions will fail until connection is restored.")
                 
                 # Create state summary
-                # Get phase string (handle both FSM Phase enum and Gemini string)
-                phase_str = self.policy.phase.value if hasattr(self.policy.phase, 'value') else str(self.policy.phase)
+                phase_str = str(self.policy.phase)  # Gemini uses string phase
                 state_summary = {
                     "task": task,
                     "phase": phase_str,
@@ -265,12 +314,12 @@ class Executor:
                     "last_action_success": act_success
                 }
                 
-                # Log
+                # Log (includes thinking process from action_plan)
                 self.logger.log_iteration(
                     image=image,
                     detection=detection,
                     state_summary=state_summary,
-                    action_plan=action_plan,
+                    action_plan=action_plan,  # Contains "thinking_process" field
                     action_result=action_result
                 )
                 

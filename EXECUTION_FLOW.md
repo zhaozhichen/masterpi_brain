@@ -82,7 +82,7 @@ executor = Executor(
    - 准备连接 MJPEG 流：`http://{ROBOT_IP}:8080/`（IP 从 .env 读取）
    - 但此时**还未连接**（延迟连接）
 
-4. **创建检测器** (`RedBlockDetector`)
+4. **准备观察** (无需硬编码检测器 - Gemini 使用视觉理解)
    - 配置 HSV 颜色范围（红色：0-10 和 170-180）
    - 准备进行颜色检测
 

@@ -7,7 +7,7 @@ from typing import Dict, Any
 
 def get_system_prompt(task_description: str = None) -> str:
     """
-    Get system prompt for Gemini Robotics-ER.
+    Get system prompt for Gemini 3 Flash.
     
     Args:
         task_description: Optional task description to include in prompt
@@ -25,10 +25,35 @@ CRITICAL RULES:
    - Updated state
 2. You MUST NOT assume precise distances. Use visual feedback (target size, centering) to iteratively approach.
 3. All actions are SHORT-STEPS (0.2-0.5s for base, small increments for arm).
+   - For base_step duration: Choose based on the situation:
+     * Large movements (searching, initial approach): 0.4-0.5s
+     * Fine adjustments (centering target, final alignment): 0.2-0.3s
+     * The closer you are to the target, the smaller the duration should be to avoid overshooting.
+     * If target is nearly centered or you're making fine corrections, use 0.2s for precise control.
 4. If target is not visible → use scan/search actions.
+   - Start by rotating the base in place to scan the environment (use base_step with angular_rate).
+   - If you've rotated a full circle (360 degrees) and still haven't found the target, consider changing the camera height:
+     * If the camera is currently looking forward/horizontal, try lowering z (e.g., z=10-15) to look downward at the floor/table.
+     * If the camera is currently looking downward, try raising z (e.g., z=20-25) to look forward/horizontal at objects on surfaces.
+     * Use arm_move_xyz to adjust z height, then continue scanning from the new perspectiv  e.
+   - This multi-height scanning strategy helps find targets that might be on the floor, on tables, or at different elevations.
 5. If action fails → try recovery (backtrack, adjust, or restart search).
 6. Never output continuous long-duration movements. Always use discrete steps.
-7. You must identify targets from the camera image yourself - use visual understanding to locate objects described in the task. The detection results provided are optional hints, but you should rely primarily on your own visual analysis of the image.
+7. You must identify targets from the camera image yourself using visual understanding. The detection results in the state summary are not reliable - rely entirely on your own visual analysis of the image to locate objects described in the task.
+
+THINKING PROCESS:
+Before making a tool call, you MUST explain your reasoning:
+- What do you observe in the current image?
+- What is your current understanding of the task progress?
+- Why are you choosing this specific action?
+- What do you expect to happen after this action?
+- How does this action fit into your overall plan?
+
+Your response should include:
+1. Your thinking/reasoning (as text)
+2. The tool call (function call) to execute the action
+
+Only the tool call will be executed by the robot. Your thinking process is for debugging and understanding your decision-making.
 
 Your goal is to execute the given task by making small, safe, observable steps."""
     
@@ -54,12 +79,13 @@ def format_state_summary(state: Dict[str, Any]) -> str:
     ]
     
     detection = state.get('detection', {})
+    # Note: Detection results are not reliable - use visual understanding from image
     if detection.get('found'):
-        lines.append(f"Target detected: center={detection.get('center')}, "
-                    f"area_ratio={detection.get('area_ratio', 0):.4f}, "
-                    f"confidence={detection.get('confidence', 0):.2f}")
+        lines.append(f"Note: Local detection found something (center={detection.get('center')}, "
+                    f"area_ratio={detection.get('area_ratio', 0):.4f}), "
+                    f"but you should rely on your own visual analysis of the image.")
     else:
-        lines.append("Target not detected")
+        lines.append("Note: No local detection - use your visual understanding to find targets in the image.")
     
     last_action = state.get('last_action')
     if last_action:
@@ -77,7 +103,7 @@ def get_tool_descriptions() -> list:
     return [
         {
             "name": "base_step",
-            "description": "Move base for a short duration (0.2-0.5s), then automatically stop. Use small durations only; rely on camera feedback after each step.",
+            "description": "Move base for a short duration (0.2-0.5s), then automatically stop. IMPORTANT: Choose duration based on situation - use shorter durations (0.2-0.3s) for fine adjustments when target is close/centered, longer durations (0.4-0.5s) for searching or initial approach. Always rely on camera feedback after each step.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -101,7 +127,7 @@ def get_tool_descriptions() -> list:
                     },
                     "duration": {
                         "type": "number",
-                        "description": "Movement duration in seconds (0.2-0.5)",
+                        "description": "Movement duration in seconds (0.2-0.5). CRITICAL: Choose duration based on precision needed: 0.2-0.3s for fine adjustments (target close/centered, small corrections), 0.4-0.5s for larger movements (searching, initial approach). Smaller duration = more precise control, prevents overshooting.",
                         "minimum": 0.2,
                         "maximum": 0.5
                     }
